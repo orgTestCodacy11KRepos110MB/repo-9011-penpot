@@ -12,15 +12,24 @@
    [app.common.pprint :as pp]
    [clojure.spec.alpha :as s]
    [cuerdas.core :as str]
-   [expound.alpha :as expound]))
+   [expound.alpha :as expound])
+  #?(:clj
+     (:import app.common.exceptions.Error)))
 
 (defmacro error
   [& {:keys [type hint] :as params}]
-  `(ex-info ~(or hint (name type))
-            (merge
-             ~(dissoc params :cause ::data)
-             ~(::data params))
-            ~(:cause params)))
+  (if (:ns &env)
+    `(ex-info ~(or hint (name type))
+              (merge
+               ~(dissoc params :cause ::data)
+               ~(::data params))
+              ~(:cause params))
+    `(Error. ^String ~(or hint (name type))
+             (merge
+              ~(dissoc params :cause ::data)
+              ~(::data params))
+             nil
+             ~(:cause params))))
 
 (defmacro raise
   [& params]
@@ -48,7 +57,11 @@
 
 (defn ex-info?
   [v]
-  (instance? #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) v))
+  (instance? #?(:clj clojure.lang.IExceptionInfo :cljs cljs.core.ExceptionInfo) v))
+
+(defn error?
+  [v]
+  (instance? #?(:clj clojure.lang.IExceptionInfo :cljs cljs.core.ExceptionInfo) v))
 
 (defn exception?
   [v]
