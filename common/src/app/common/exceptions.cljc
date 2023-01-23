@@ -14,7 +14,11 @@
    [cuerdas.core :as str]
    [expound.alpha :as expound])
   #?(:clj
-     (:import app.common.exceptions.Error)))
+     (:import
+      app.common.exceptions.ExceptionData
+      clojure.lang.IPersistentMap)))
+
+#?(:clj (set! *warn-on-reflection* true))
 
 (defmacro error
   [& {:keys [type hint] :as params}]
@@ -24,12 +28,12 @@
                ~(dissoc params :cause ::data)
                ~(::data params))
               ~(:cause params))
-    `(Error. ^String ~(or hint (name type))
-             (merge
-              ~(dissoc params :cause ::data)
-              ~(::data params))
-             nil
-             ~(:cause params))))
+    `(let [params#  (merge ~(dissoc params :cause ::data ::meta) ~(::data params))
+           message# ~(or hint (name type))]
+       (ExceptionData/create
+        ^String message#
+        ~(::meta params)
+        ~(:cause params)))))
 
 (defmacro raise
   [& params]
@@ -67,31 +71,30 @@
   [v]
   (instance? #?(:clj java.lang.Throwable :cljs js/Error) v))
 
-#?(:cljs
-   (deftype WrappedException [cause meta]
-     cljs.core/IMeta
-     (-meta [_] meta)
+;; #?(:clj
+;;    (deftype WrappedException [cause meta]
+;;      clojure.lang.IMeta
+;;      (meta [_] meta)
 
-     cljs.core/IDeref
-     (-deref [_] cause))
-   :clj
-   (deftype WrappedException [cause meta]
-     clojure.lang.IMeta
-     (meta [_] meta)
-
-     clojure.lang.IDeref
-     (deref [_] cause)))
+;;      clojure.lang.IDeref
+;;      (deref [_] cause)))
 
 #?(:clj (ns-unmap 'app.common.exceptions '->WrappedException))
 #?(:clj (ns-unmap 'app.common.exceptions 'map->WrappedException))
 
 (defn wrapped?
   [o]
-  (instance? WrappedException o))
+  (and (instance? ExceptionData o)
+       (::wrapped (meta o))))
 
-(defn wrap-with-context
-  [cause context]
-  (WrappedException. cause context))
+#?(:clj
+   (defn with-context
+     [cause context]
+     (if (instance? ExceptionData cause)
+       (vary-meta cause merge context)
+       (error :hint (str/ffmt "Wrapped: %" (ex-message cause))
+              :cause cause
+              ::meta {::wrapped true}))))
 
 (defn explain
   ([data] (explain data nil))

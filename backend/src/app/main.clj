@@ -430,8 +430,8 @@
    {:pool (ig/ref ::db/pool)
     :key  (cf/get :secret-key)}
 
-   ::lzmq/receiver
-   {}
+   ;; ::lzmq/receiver
+   ;; {}
 
    ::audit/collector
    {::db/pool           (ig/ref ::db/pool)
@@ -454,17 +454,16 @@
    {::db/pool            (ig/ref ::db/pool)
     ::http.client/client (ig/ref ::http.client/client)}
 
-   :app.loggers.loki/reporter
-   {::lzmq/receiver      (ig/ref ::lzmq/receiver)
-    ::http.client/client (ig/ref ::http.client/client)}
+   ;; :app.loggers.loki/reporter
+   ;; {::lzmq/receiver      (ig/ref ::lzmq/receiver)
+   ;;  ::http.client/client (ig/ref ::http.client/client)}
 
-   :app.loggers.mattermost/reporter
-   {::lzmq/receiver      (ig/ref ::lzmq/receiver)
-    ::http.client/client (ig/ref ::http.client/client)}
+   ;; :app.loggers.mattermost/reporter
+   ;; {::lzmq/receiver      (ig/ref ::lzmq/receiver)
+   ;;  ::http.client/client (ig/ref ::http.client/client)}
 
    :app.loggers.database/reporter
-   {::lzmq/receiver (ig/ref :app.loggers.zmq/receiver)
-    ::db/pool       (ig/ref ::db/pool)}
+   {::db/pool (ig/ref ::db/pool)}
 
    ::sto/storage
    {:pool     (ig/ref ::db/pool)

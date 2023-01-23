@@ -17,19 +17,19 @@ import clojure.lang.IReference;
 import clojure.lang.ISeq;
 import clojure.lang.IObj;
 
-public class Error extends RuntimeException implements IExceptionInfo, IReference, IObj {
+public class ExceptionData extends RuntimeException implements IExceptionInfo, IReference, IObj {
   public final IPersistentMap data;
   public IPersistentMap metadata;
 
-  public Error(String message, IPersistentMap data) {
+  public ExceptionData(String message, IPersistentMap data) {
     this(message, data, null, null);
   }
 
-  public Error(String message, IPersistentMap data, IPersistentMap meta) {
+  public ExceptionData(String message, IPersistentMap data, IPersistentMap meta) {
     this(message, data, meta, null);
   }
 
-  public Error(String message, IPersistentMap data, IPersistentMap meta, Throwable throwable) {
+  public ExceptionData(String message, IPersistentMap data, IPersistentMap meta, Throwable throwable) {
     super(message, throwable);
     this.metadata = meta;
 
@@ -40,8 +40,8 @@ public class Error extends RuntimeException implements IExceptionInfo, IReferenc
     }
   }
 
-  public static Error create(String message, IPersistentMap data, IPersistentMap meta, Throwable cause) {
-    return new Error(message, data, meta, cause);
+  public static ExceptionData create(String message, IPersistentMap data, IPersistentMap meta, Throwable cause) {
+    return new ExceptionData(message, data, meta, cause);
   }
 
   public IPersistentMap getData() {
@@ -64,11 +64,10 @@ public class Error extends RuntimeException implements IExceptionInfo, IReferenc
   }
 
   public IObj withMeta(IPersistentMap meta) {
-    this.metadata = meta;
-    return this;
+    return new ExceptionData(this.getMessage(), this.data, meta, this.getCause());
   }
 
   public String toString() {
-    return "Error: " + getMessage() + " " + data.toString();
+    return "ExceptionData: " + getMessage() + " " + data.toString();
   }
 }
