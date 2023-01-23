@@ -235,7 +235,6 @@
              (p/fnly (fn [claims cause]
                        (when cause
                          (l/trace :hint "exception on decoding malformed token" :cause cause))
-
                        (let [request (cond-> request
                                        (map? claims)
                                        (-> (assoc ::token-claims claims)

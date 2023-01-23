@@ -47,9 +47,10 @@
       :cljs [cljs.reader :as edn])
    [app.common.exceptions :as ex]
    [app.common.uuid :as uuid]
+   [app.common.pprint :as pp]
+   [app.common.data :as d]
    [clojure.spec.alpha :as s]
    [cuerdas.core :as str]
-   [fipp.edn :as fpp]
    [promesa.exec :as px]
    [promesa.util :as pu])
   #?(:clj
@@ -57,6 +58,7 @@
       org.slf4j.LoggerFactory
       org.slf4j.Logger)))
 
+(def ^:dynamic *context* nil)
 
 ;; #?(:clj
 ;;    (defn get-error-context
@@ -164,15 +166,19 @@
   [& props]
   (let [{:keys [::level ::logger ::context ::sync? cause] :or {sync? false}} props
         props (into [] msg-props-xf props)]
-    `(let [props# (cond-> (delay ~props) ~sync? deref)]
+    `(let [props#   (cond-> (delay ~props) ~sync? deref)
+           context# *context*]
        (px/run! *default-executor*
                 (fn []
-                  (let [lrecord# {::id (uuid/next)
+                  (let [props#   (if ~sync? props# (deref props#))
+                        context# (d/without-nils
+                                  (merge context# ~context))
+                        lrecord# {::id (uuid/next)
                                   ::props props#
-                                  ::context ~context
+                                  ::context context#
                                   ::level ~level
                                   ::logger ~logger
-                                  ::cause ~cause}]
+                                  ::exception ~cause}]
                     (swap! log-record (constantly lrecord#))))))))
 
 (defmulti fmt-props (fn [t _] t))
@@ -204,18 +210,17 @@
 #?(:clj
    (defn slf4j-log-handler
      {:no-doc true}
-     [_ _ _ {:keys [::logger ::level ::props ::cause]}]
+     [_ _ _ {:keys [::logger ::level ::props ::exception]}]
      (let [logger (LoggerFactory/getLogger ^String logger)]
        (when (enabled? logger level)
-         (let [props   (pu/maybe-deref props)
-               message (build-message props cause)]
+         (let [message (build-message props exception)]
            (case level
-             :trace (.trace ^Logger logger ^String message ^Throwable cause)
-             :debug (.debug ^Logger logger ^String message ^Throwable cause)
-             :info  (.info  ^Logger logger ^String message ^Throwable cause)
-             :warn  (.warn  ^Logger logger ^String message ^Throwable cause)
-             :error (.error ^Logger logger ^String message ^Throwable cause)
-             :fatal (.error ^Logger logger ^String message ^Throwable cause)
+             :trace (.trace ^Logger logger ^String message ^Throwable exception)
+             :debug (.debug ^Logger logger ^String message ^Throwable exception)
+             :info  (.info  ^Logger logger ^String message ^Throwable exception)
+             :warn  (.warn  ^Logger logger ^String message ^Throwable exception)
+             :error (.error ^Logger logger ^String message ^Throwable exception)
+             :fatal (.error ^Logger logger ^String message ^Throwable exception)
              (throw (IllegalArgumentException. (str "invalid level:"  level)))))))))
 
 ;; Attach asynchronous logs reader that forward all messages to SLF4J
@@ -298,7 +303,7 @@
          (doseq [[type n v] adt]
            (case type
              :js (js/console.log n v)
-             :error (if (ex/info? v)
+             :error (if (ex/error? v)
                       (js/console.error (pr-str v))
                       (js/console.error v))))
 
@@ -311,7 +316,7 @@
 
              (when (and data (not explain))
                (js/console.log "Data:")
-               (js/console.log (ex/pprint-str data)))
+               (js/console.log (pp/pprint-str data)))
 
              (js/console.log (.-stack cause))))
 

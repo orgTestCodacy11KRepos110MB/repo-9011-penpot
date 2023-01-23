@@ -50,6 +50,11 @@
   ;; We need to return the anonymous profile object in two cases, when
   ;; no profile-id is in session, and when db call raises not found. In all other
   ;; cases we need to reraise the exception.
+  ;; (throw (RuntimeException. "foobar"))
+  ;; (ex/raise :type :internal
+  ;;           :code :testing-exceptions
+  ;;           :hint "A test exception")
+
   (try
     (-> (get-profile pool profile-id)
         (strip-private-attrs)

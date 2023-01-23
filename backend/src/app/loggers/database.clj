@@ -7,7 +7,10 @@
 (ns app.loggers.database
   "A specific logger impl that persists errors on the database."
   (:require
+   [app.common.data :as d]
+   [app.common.exceptions :as ex]
    [app.common.logging :as l]
+   [app.common.pprint :as pp]
    [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.db :as db]
@@ -15,8 +18,8 @@
    [clojure.spec.alpha :as s]
    [cuerdas.core :as str]
    [integrant.core :as ig]
-   [promesa.exec.csp :as sp]
-   [promesa.exec :as px]))
+   [promesa.exec :as px]
+   [promesa.exec.csp :as sp]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Error Listener
@@ -27,32 +30,54 @@
 (defonce enabled (atom true))
 
 (defn- persist-on-database!
-  [{:keys [::db/pool] :as cfg} {:keys [id] :as event}]
+  [pool id report]
   (when-not (db/read-only? pool)
-    (db/insert! pool :server-error-report {:id id :content (db/tjson event)})))
+    (db/insert! pool :server-error-report
+                {:id id
+                 :version 2
+                 :content (db/tjson report)})))
 
-(defn parse-event
-  [{:keys [::l/props ::l/context event] :as record}]
-  (-> {}
-      (assoc :hint (or (:hint event) (:message event)))
-      (assoc :tenant (cf/get :tenant))
-      (assoc :host (cf/get :host))
-      (assoc :public-uri (cf/get :public-uri))
-      (assoc :version (:full cf/version))
-      (update :id #(or % (uuid/next)))))
+(defn record->report
+  [{:keys [::l/context ::l/props ::l/exception ::l/logger ::l/level] :as record}]
+  ;; TODO: assert log record
+  (merge
+   {:context (-> context
+                 (assoc :tenant (cf/get :tenant))
+                 (assoc :host (cf/get :host))
+                 (assoc :public-uri (cf/get :public-uri))
+                 (assoc :version (:full cf/version))
+                 (assoc :logger-name logger)
+                 (assoc :logger-level level)
+                 (dissoc :params)
+                 (pp/pprint-str :width 200))
+    :params  (-> (:params context)
+                 (pp/pprint-str :width 200))
+    :props   (pp/pprint-str (into {} props) :width 200)}
+
+   (when exception
+     {:hint  (ex-message exception)
+      :trace (ex/format-throwable exception :data? false)})
+
+   (when-let [mdata (meta exception)]
+     {:mdata (pp/pprint-str mdata :width 200)})
+
+   (when-let [data (ex-data exception)]
+     {:spec-value    (some-> (::s/value data) (pp/pprint-str :width 200))
+      :spec-explain  (ex/explain data)
+      :data          (-> data
+                         (dissoc ::s/problems ::s/value ::s/spec :hint)
+                         (pp/pprint-str :width 200))})))
 
 (defn- handle-event
-  [cfg record]
+  [{:keys [::db/pool]} {:keys [::l/id] :as record}]
   (try
-    (app.common.pprint/pprint record)
-    #_(let [event (prepare-event record)
-            uri   (cf/get :public-uri)]
+    (let [uri    (cf/get :public-uri)
+          report (-> record record->report d/without-nils)]
+      (app.common.pprint/pprint record)
+      (l/debug :hint "registering error on database" :id id
+               :uri (str uri "/dbg/error/" id))
 
-
-        (l/debug :hint "registering error on database" :id (:id event)
-                 :uri (str uri "/dbg/error/" (:id event)))
-
-        (persist-on-database! cfg event))
+      (persist-on-database! pool id report))
     (catch Throwable cause
       (l/warn :hint "unexpected exception on database error logger" :cause cause))))
 

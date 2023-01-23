@@ -38,7 +38,7 @@
 
 (defn handle-event
   [cfg event]
-  (when @enabled
+  #_(when @enabled
     (try
       (let [event (ldb/parse-event event)]
         (send-mattermost-notification! cfg event))

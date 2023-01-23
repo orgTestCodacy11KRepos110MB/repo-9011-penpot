@@ -32,8 +32,9 @@
            message# ~(or hint (name type))]
        (ExceptionData/create
         ^String message#
-        ~(::meta params)
-        ~(:cause params)))))
+        ^IPersistentMap params#
+        ^IPersistentMap ~(::meta params)
+        ^Throwable ~(:cause params)))))
 
 (defmacro raise
   [& params]
@@ -54,12 +55,8 @@
   [& exprs]
   `(try* (^:once fn* [] ~@exprs) identity))
 
-(defn cause
-  "Retrieve chained cause if available of the exception."
-  [^Throwable throwable]
-  (.getCause throwable))
-
 (defn ex-info?
+  {:deprecated true}
   [v]
   (instance? #?(:clj clojure.lang.IExceptionInfo :cljs cljs.core.ExceptionInfo) v))
 
@@ -71,30 +68,10 @@
   [v]
   (instance? #?(:clj java.lang.Throwable :cljs js/Error) v))
 
-;; #?(:clj
-;;    (deftype WrappedException [cause meta]
-;;      clojure.lang.IMeta
-;;      (meta [_] meta)
-
-;;      clojure.lang.IDeref
-;;      (deref [_] cause)))
-
-#?(:clj (ns-unmap 'app.common.exceptions '->WrappedException))
-#?(:clj (ns-unmap 'app.common.exceptions 'map->WrappedException))
-
-(defn wrapped?
-  [o]
-  (and (instance? ExceptionData o)
-       (::wrapped (meta o))))
-
 #?(:clj
-   (defn with-context
-     [cause context]
-     (if (instance? ExceptionData cause)
-       (vary-meta cause merge context)
-       (error :hint (str/ffmt "Wrapped: %" (ex-message cause))
-              :cause cause
-              ::meta {::wrapped true}))))
+   (defn runtime-exception?
+     [v]
+     (instance? RuntimeException v)))
 
 (defn explain
   ([data] (explain data nil))
@@ -113,15 +90,13 @@
          (s/explain-out (update data ::s/problems #(take max-problems %))))))))
 
 #?(:clj
-(defn print-throwable
-  [^Throwable cause
-   & {:keys [trace? data? chain? data-level data-length trace-length explain-length]
-      :or {trace? true
-           data? true
-           chain? true
-           explain-length 10
-           data-length 10
-           data-level 3}}]
+(defn format-throwable
+  [^Throwable cause & {:keys [trace? data? chain? data-level data-length trace-length]
+                       :or {trace? true
+                            data? true
+                            chain? true
+                            data-length 10
+                            data-level 3}}]
   (letfn [(print-trace-element [^StackTraceElement e]
             (let [class (.getClassName e)
                   method (.getMethodName e)]
@@ -152,16 +127,16 @@
             (print   " →  ")
             (printf "%s: %s" (.getName (class cause)) (first (str/lines (ex-message cause))))
 
-            (when-let [e (first (.getStackTrace cause))]
+            (when-let [e (first (.getStackTrace ^Throwable cause))]
               (printf " (%s:%d)" (or (.getFileName e) "") (.getLineNumber e)))
 
             (newline))
 
           (print-summary [cause]
-            (let [causes (loop [cause (.getCause cause)
+            (let [causes (loop [cause (ex-cause cause)
                                 result []]
                            (if cause
-                             (recur (.getCause cause)
+                             (recur (ex-cause cause)
                                     (conj result cause))
                              result))]
               (println "TRACE:")
@@ -197,7 +172,7 @@
 
             (when chain?
               (loop [cause cause]
-                (when-let [cause (.getCause cause)]
+                (when-let [cause (ex-cause cause)]
                   (newline)
                   (print-trace cause)
 
@@ -209,9 +184,10 @@
 
                   (recur cause)))))
           ]
+    (with-out-str
+      (print-all cause)))))
 
-    (println
-     (with-out-str
-       (print-all cause))))))
-
-
+#?(:clj
+(defn print-throwable
+  [cause & {:as opts}]
+  (println (format-throwable cause opts))))
