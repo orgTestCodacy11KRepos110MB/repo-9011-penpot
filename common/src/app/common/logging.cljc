@@ -45,10 +45,11 @@
   (:require
    #?(:clj  [clojure.edn :as edn]
       :cljs [cljs.reader :as edn])
-   [app.common.exceptions :as ex]
-   [app.common.uuid :as uuid]
-   [app.common.pprint :as pp]
    [app.common.data :as d]
+   [app.common.exceptions :as ex]
+   [app.common.pprint :as pp]
+   [app.common.spec :as us]
+   [app.common.uuid :as uuid]
    [clojure.spec.alpha :as s]
    [cuerdas.core :as str]
    [promesa.exec :as px]
@@ -59,20 +60,6 @@
       org.slf4j.Logger)))
 
 (def ^:dynamic *context* nil)
-
-;; #?(:clj
-;;    (defn get-error-context
-;;      [error]
-;;      (merge
-;;       {:hint (ex-message error)}
-;;       (when-let [data (ex-data error)]
-;;         (merge
-;;          {:spec-problems (some->> data ::s/problems (take 10) seq vec)
-;;           :spec-value    (some->> data ::s/value)
-;;           :data          (some-> data (dissoc ::s/problems ::s/value ::s/spec))}
-;;          (when-let [explain (ex/explain data)]
-;;            {:spec-explain explain}))))))
-
 
 #?(:clj (set! *warn-on-reflection* true))
 
@@ -160,6 +147,16 @@
   (comp (partition-all 2)
         (map vec)
         (remove (fn [[k _]] (contains? reserved-props k)))))
+
+(s/def ::id ::us/uuid)
+(s/def ::props (s/coll-of (s/tuple keyword? any?) :kind vector?))
+(s/def ::context (s/nilable (s/map-of keyword? any?)))
+(s/def ::level #{:trace :debug :info :warn :error :fatal})
+(s/def ::logger string?)
+(s/def ::exception (s/nilable ex/exception?))
+(s/def ::record
+  (s/keys :req [::id ::props ::logger ::level]
+          :opt [::exception ::context]))
 
 (defmacro log!
   "Emit a new log record to the global log-record state (asynchronously). "

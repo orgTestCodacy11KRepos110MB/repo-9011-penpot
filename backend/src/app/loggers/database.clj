@@ -11,6 +11,7 @@
    [app.common.exceptions :as ex]
    [app.common.logging :as l]
    [app.common.pprint :as pp]
+   [app.common.spec :as us]
    [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.db :as db]
@@ -39,7 +40,7 @@
 
 (defn record->report
   [{:keys [::l/context ::l/props ::l/exception ::l/logger ::l/level] :as record}]
-  ;; TODO: assert log record
+  (us/assert! ::l/record record)
   (merge
    {:context (-> context
                  (assoc :tenant (cf/get :tenant))
@@ -50,8 +51,8 @@
                  (assoc :logger-level level)
                  (dissoc :params)
                  (pp/pprint-str :width 200))
-    :params  (-> (:params context)
-                 (pp/pprint-str :width 200))
+    :params  (some-> (:params context)
+                     (pp/pprint-str :width 200))
     :props   (pp/pprint-str (into {} props) :width 200)}
 
    (when exception
@@ -73,7 +74,6 @@
   (try
     (let [uri    (cf/get :public-uri)
           report (-> record record->report d/without-nils)]
-      (app.common.pprint/pprint record)
       (l/debug :hint "registering error on database" :id id
                :uri (str uri "/dbg/error/" id))
 

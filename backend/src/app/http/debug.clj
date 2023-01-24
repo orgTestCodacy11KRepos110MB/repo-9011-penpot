@@ -228,7 +228,6 @@
                   (tmpl/render params))))
 
           (render-template-v2 [{report :content}]
-            (app.common.pprint/pprint report)
             (-> (io/resource "app/templates/error-report.v2.tmpl")
                 (tmpl/render report)))
 

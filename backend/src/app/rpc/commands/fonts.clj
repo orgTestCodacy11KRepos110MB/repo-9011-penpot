@@ -62,13 +62,6 @@
 (sv/defmethod ::get-font-variants
   {::doc/added "1.18"}
   [{:keys [::db/pool] :as cfg} {:keys [::rpc/profile-id team-id file-id project-id] :as params}]
-
-  (us/assert! ::test-spec {:fooo 1})
-
-  (ex/raise :type :internal
-            :code :testing-exceptions
-            :hint "A test exception")
-
   (with-open [conn (db/open pool)]
     (cond
       (uuid? team-id)
