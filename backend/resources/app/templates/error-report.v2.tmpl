@@ -7,9 +7,12 @@ penpot - error report v2 {{id}}
 {% block content %}
 <nav>
   <div>[<a href="/dbg/error">⮜</a>]</div>
+  <div>[<a href="#message">message</a>]</div>
   <div>[<a href="#props">props</a>]</div>
   <div>[<a href="#context">context</a>]</div>
+  {% if params %}
   <div>[<a href="#params">request params</a>]</div>
+  {% endif %}
   {% if data %}
   <div>[<a href="#edata">error data</a>]</div>
   {% endif %}
@@ -29,6 +32,8 @@ penpot - error report v2 {{id}}
 <main>
   <div class="table">
     <div class="table-row multiline">
+      <div id="message" class="table-key">MESSAGE: </div>
+
       <div class="table-val">
         <h1>{{hint}}</h1>
       </div>

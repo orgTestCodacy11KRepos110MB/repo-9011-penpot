@@ -84,7 +84,7 @@
   (let [edata   (ex-data error)
         explain (ex/explain edata)]
     (binding [l/*context* (request->context request)]
-      (l/error :hint (ex-message error) :cause error)
+      (l/error :hint "Assertion error" :message (ex-message error) :cause error)
       (yrs/response :status 500
                     :body   {:type :server-error
                              :code :assertion
@@ -105,7 +105,7 @@
 
       :else
       (binding [l/*context* (request->context request)]
-        (l/error :hint (ex-message error) :cause error)
+        (l/error :hint "Internal error" :message (ex-message error) :cause error)
         (yrs/response 500 {:type :server-error
                            :code :unhandled
                            :hint (ex-message error)
@@ -115,7 +115,7 @@
   [error request]
   (let [state (.getSQLState ^java.sql.SQLException error)]
     (binding [l/*context* (request->context request)]
-      (l/error :hint (ex-message error) :cause error)
+      (l/error :hint "PSQL error" :message (ex-message error) :cause error)
       (cond
         (= state "57014")
         (yrs/response 504 {:type :server-error
@@ -140,7 +140,7 @@
       ;; This means that exception is not a controlled exception.
       (nil? edata)
       (binding [l/*context* (request->context request)]
-        (l/error :hint (ex-message error) :cause error)
+        (l/error :hint "Unexpected error" :message (ex-message error) :cause error)
         (yrs/response 500 {:type :server-error
                            :code :unexpected
                            :hint (ex-message error)}))
@@ -156,7 +156,7 @@
 
       :else
       (binding [l/*context* (request->context request)]
-        (l/error :hint (ex-message error) :cause error)
+        (l/error :hint "Unhandled error" :message (ex-message error) :cause error)
         (yrs/response 500 {:type :server-error
                            :code :unhandled
                            :hint (ex-message error)

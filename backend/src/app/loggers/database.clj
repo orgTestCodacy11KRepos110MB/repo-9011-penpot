@@ -39,8 +39,9 @@
                  :content (db/tjson report)})))
 
 (defn record->report
-  [{:keys [::l/context ::l/props ::l/logger ::l/level ::l/cause] :as record}]
+  [{:keys [::l/context ::l/message ::l/props ::l/logger ::l/level ::l/cause] :as record}]
   (us/assert! ::l/record record)
+
   (merge
    {:context (-> context
                  (assoc :tenant (cf/get :tenant))
@@ -53,11 +54,9 @@
                  (pp/pprint-str :width 200))
     :params  (some-> (:params context)
                      (pp/pprint-str :width 200))
-    :props   (pp/pprint-str props :width 200)}
-
-   (when cause
-     {:hint  (ex-message cause)
-      :trace (ex/format-throwable cause :data? false :explain? false :header? false :summary? false)})
+    :props   (pp/pprint-str props :width 200)
+    :hint    (or (ex-message cause) @message)
+    :trace   (ex/format-throwable cause :data? false :explain? false :header? false :summary? false)}
 
    (when-let [mdata (meta cause)]
      {:mdata (pp/pprint-str mdata :width 200)})

@@ -13,10 +13,13 @@
    [app.config :as cf]
    [app.http.client :as http]
    [app.util.json :as json]
+   [app.loggers.database :as ldb]
    [clojure.spec.alpha :as s]
    [integrant.core :as ig]
    [promesa.exec :as px]
    [promesa.exec.csp :as sp]))
+
+(defonce enabled (atom true))
 
 (declare ^:private handle-record)
 
@@ -30,7 +33,10 @@
       {:name "penpot/loki-reporter"
        :virtual true}
       (l/info :hint "initializing loki reporter" :uri uri)
-      (let [input (sp/chan (sp/dropping-buffer 2048))
+      (let [input (sp/chan (sp/dropping-buffer 2048)
+                           (comp
+                            (filter ldb/error-record?)
+                            (remove (fn [record] (= (::l/logger record) "app.loggers.loki")))))
             cfg   (assoc cfg ::uri uri)]
         (add-watch l/log-record ::reporter #(sp/put! input %4))
         (try
@@ -83,9 +89,17 @@
   (try
     (let [payload  (prepare-payload record)
           response (make-request cfg payload)]
+      (prn "RECORD" response)
+
       (when-not (= 204 (:status response))
         (l/error :hint "error on sending log to loki (unexpected response)"
                  :response (pr-str response))))
+
+    (catch java.net.ConnectException cause
+      (l/error :hint "unable to connect to loki server"
+               :uri (::uri cfg)
+               :cause cause))
+
     (catch Throwable cause
       (l/error :hint "error on sending log to loki (unexpected exception)"
                :cause cause))))
