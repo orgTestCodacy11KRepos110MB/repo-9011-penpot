@@ -39,7 +39,7 @@
                  :content (db/tjson report)})))
 
 (defn record->report
-  [{:keys [::l/context ::l/props ::l/exception ::l/logger ::l/level] :as record}]
+  [{:keys [::l/context ::l/props ::l/logger ::l/level ::l/cause] :as record}]
   (us/assert! ::l/record record)
   (merge
    {:context (-> context
@@ -53,16 +53,16 @@
                  (pp/pprint-str :width 200))
     :params  (some-> (:params context)
                      (pp/pprint-str :width 200))
-    :props   (pp/pprint-str (into {} props) :width 200)}
+    :props   (pp/pprint-str props :width 200)}
 
-   (when exception
-     {:hint  (ex-message exception)
-      :trace (ex/format-throwable exception :data? false)})
+   (when cause
+     {:hint  (ex-message cause)
+      :trace (ex/format-throwable cause :data? false :explain? false :header? false :summary? false)})
 
-   (when-let [mdata (meta exception)]
+   (when-let [mdata (meta cause)]
      {:mdata (pp/pprint-str mdata :width 200)})
 
-   (when-let [data (ex-data exception)]
+   (when-let [data (ex-data cause)]
      {:spec-value    (some-> (::s/value data) (pp/pprint-str :width 200))
       :spec-explain  (ex/explain data)
       :data          (-> data
@@ -81,16 +81,17 @@
     (catch Throwable cause
       (l/warn :hint "unexpected exception on database error logger" :cause cause))))
 
-(defn- error-event?
-  [{:keys [::l/level]}]
-  (= :error level))
+(defn error-record?
+  [{:keys [::l/level ::l/cause]}]
+  (and (= :error level)
+       (ex/exception? cause)))
 
 (defmethod ig/pre-init-spec ::reporter [_]
   (s/keys :req [::db/pool]))
 
 (defmethod ig/init-key ::reporter
   [_ cfg]
-  (let [input (sp/chan (sp/sliding-buffer 32) (filter error-event?))]
+  (let [input (sp/chan (sp/sliding-buffer 32) (filter error-record?))]
     (add-watch l/log-record ::reporter #(sp/put! input %4))
     (px/thread
       {:name "penpot/database-reporter" :virtual true}

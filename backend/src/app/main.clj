@@ -430,9 +430,6 @@
    {:pool (ig/ref ::db/pool)
     :key  (cf/get :secret-key)}
 
-   ;; ::lzmq/receiver
-   ;; {}
-
    ::audit/collector
    {::db/pool           (ig/ref ::db/pool)
     ::wrk/executor      (ig/ref ::wrk/executor)
@@ -458,9 +455,8 @@
    ;; {::lzmq/receiver      (ig/ref ::lzmq/receiver)
    ;;  ::http.client/client (ig/ref ::http.client/client)}
 
-   ;; :app.loggers.mattermost/reporter
-   ;; {::lzmq/receiver      (ig/ref ::lzmq/receiver)
-   ;;  ::http.client/client (ig/ref ::http.client/client)}
+   :app.loggers.mattermost/reporter
+   {::http.client/client (ig/ref ::http.client/client)}
 
    :app.loggers.database/reporter
    {::db/pool (ig/ref ::db/pool)}

@@ -41,7 +41,7 @@
   library and it doesn't rely on the underlying implementation (aka
   SLF4J).
   "
-  #?(:cljs (:require-macros [app.common.logging]))
+  #?(:cljs (:require-macros [app.common.logging :as l]))
   (:require
    #?(:clj  [clojure.edn :as edn]
       :cljs [cljs.reader :as edn])
@@ -63,66 +63,48 @@
 
 #?(:clj (set! *warn-on-reflection* true))
 
-(def ^{:doc "A global log-record atom instance; stores last logged record."}
+(defonce ^{:doc "A global log-record atom instance; stores last logged record."}
   log-record
   (atom nil))
 
-(def ^{:doc "Default executor instance used for processing logs."
-       :dynamic true}
+(defonce
+  ^{:doc "Default executor instance used for processing logs."
+    :dynamic true}
   *default-executor*
   (delay
     #?(:clj  (px/single-executor :factory (px/thread-factory :name "penpot/logger"))
        :cljs (px/microtask-executor))))
 
 #?(:cljs
-   (goog-define props-format ":default")
-   :clj
-   (def ^:private props-format
-     (System/getProperty "penpot.logging.props-format" ":default")))
+   (defonce loggers (js/Map.)))
 
 #?(:cljs
-   (goog-define exception-format ":default")
-   :clj
-   (def ^:private exception-format
-     (System/getProperty "penpot.logging.exception-format" ":default")))
-
-(def ^{:doc "Default format used to encode the log record props."
-       :dynamic true}
-  *default-props-format*
-  (or (ex/try! (edn/read-string props-format)) :default))
-
-(def ^{:doc "Default format used to encode the log cause exception."
-       :dynamic true}
-  *default-exception-format*
-  (or (ex/try! (edn/read-string exception-format)) :default))
+   (declare level->int))
 
 #?(:cljs
-   (defonce ^:private loggers (js/Map.)))
-
-#?(:cljs
-   (declare ^:private level->int))
+   (defn- get-parent-logger
+     [^string logger]
+     (let [lindex (.lastIndexOf logger ".")]
+       (.slice logger 0 (max lindex 0)))))
 
 #?(:cljs
    (defn- get-logger-level
      "Get the current level set for the specified logger. Returns int."
      [^string logger]
-     (letfn [(get-parent [logger]
-               (let [lindex (.lastIndexOf ^string logger ".")]
-                 (.slice ^string logger 0 (js/Math.max lindex 0))))]
-       (let [val (.get ^js/Map loggers logger)]
-         (if (pos? val)
-           val
-           (loop [logger' (get-parent logger)]
-             (let [val (.get ^js/Map loggers logger')]
-               (if (some? val)
+     (let [val (.get ^js/Map loggers logger)]
+       (if (pos? val)
+         val
+         (loop [logger' (get-parent-logger logger)]
+           (let [val (.get ^js/Map loggers logger')]
+             (if (some? val)
+               (do
+                 (.set ^js/Map loggers logger val)
+                 val)
+               (if (= "" logger')
                  (do
-                   (.set ^js/Map loggers logger val)
-                   val)
-                 (if (= "" logger')
-                   (do
-                     (.set ^js/Map loggers logger 100)
-                     100)
-                   (recur (get-parent logger')))))))))))
+                   (.set ^js/Map loggers logger 100)
+                   100)
+                 (recur (get-parent-logger logger'))))))))))
 
 (defn enabled?
   "Check if logger has enabled logging for given level."
@@ -140,6 +122,66 @@
      (>= (level->int level)
          (get-logger-level logger))))
 
+#?(:cljs
+   (defn- level->color
+     [level]
+     (case level
+       :error "#c82829"
+       :warn  "#f5871f"
+       :info  "#4271ae"
+       :debug "#969896"
+       :trace "#8e908c")))
+
+#?(:cljs
+   (defn- level->name
+     [level]
+     (case level
+       :debug "DBG"
+       :trace "TRC"
+       :info  "INF"
+       :warn   "WRN"
+       :error "ERR")))
+
+#?(:cljs
+   (defn level->int
+     [level]
+     (case level
+       :debug 10
+       :trace 20
+       :info 30
+       :warn 40
+       :error 50)))
+
+(defn build-message
+  [props]
+  (loop [props  (seq props)
+         result []]
+    (if-let [[k v] (first props)]
+      (if (simple-ident? k)
+        (recur (next props)
+               (conj result (str (name k) "=" (pr-str v))))
+        (recur (next props)
+               result))
+      (str/join ", " result))))
+
+(defn build-stack-trace
+  [cause]
+  #?(:clj  (ex/format-throwable cause)
+     :cljs (.-stack ^js cause)))
+
+#?(:cljs
+   (defn- get-special-props
+     [props]
+     (->> (seq props)
+          (keep (fn [[k v]]
+                  (when (qualified-ident? k)
+                    (cond
+                      (= "js" (namespace k))
+                      [:js (name k) (if (object? v) v (clj->js v))]
+
+                      (= "error" (namespace))
+                      [:error (name k) v])))))))
+
 (def ^:private reserved-props
   #{::level :cause ::logger ::sync? ::context})
 
@@ -149,14 +191,15 @@
         (remove (fn [[k _]] (contains? reserved-props k)))))
 
 (s/def ::id ::us/uuid)
-(s/def ::props (s/coll-of (s/tuple keyword? any?) :kind vector?))
+(s/def ::props any? #_d/ordered-map?)
 (s/def ::context (s/nilable (s/map-of keyword? any?)))
 (s/def ::level #{:trace :debug :info :warn :error :fatal})
 (s/def ::logger string?)
-(s/def ::exception (s/nilable ex/exception?))
+(s/def ::cause (s/nilable ex/exception?))
+(s/def ::message delay?)
 (s/def ::record
   (s/keys :req [::id ::props ::logger ::level]
-          :opt [::exception ::context]))
+          :opt [::cause ::context]))
 
 (defmacro log!
   "Emit a new log record to the global log-record state (asynchronously). "
@@ -168,141 +211,57 @@
        (px/run! *default-executor*
                 (fn []
                   (let [props#   (if ~sync? props# (deref props#))
+                        props#   (into (d/ordered-map) props#)
+                        cause#   ~cause
                         context# (d/without-nils
                                   (merge context# ~context))
                         lrecord# {::id (uuid/next)
+                                  ::message (delay (build-message props#))
                                   ::props props#
                                   ::context context#
                                   ::level ~level
-                                  ::logger ~logger
-                                  ::exception ~cause}]
+                                  ::logger ~logger}
+                        lrecord# (cond-> lrecord#
+                                   (some? cause#)
+                                   (assoc ::cause cause#
+                                          ::trace (delay (build-stack-trace cause#))))]
                     (swap! log-record (constantly lrecord#))))))))
-
-(defmulti fmt-props (fn [t _] t))
-(defmethod fmt-props :default
-  [_ props]
-  (loop [props  (seq props)
-         result []]
-    (if-let [[k v] (first props)]
-      (recur (next props)
-             (conj result (str (name k) "=" (pr-str v))))
-      (str/join ", " result))))
-
-(defmulti fmt-exception (fn [t _] t))
-(defmethod fmt-exception :default
-  [_ cause]
-  #?(:clj  (with-out-str (ex/print-throwable cause))
-     :cljs nil))
-
-#?(:clj
-   (defn build-message
-     {:no-doc true}
-     [props cause]
-     (let [sbody  (fmt-props *default-props-format* props)
-           scause (some->> cause (fmt-exception *default-exception-format*))]
-       (cond-> sbody
-         (some? scause)
-         (str "\n" scause)))))
 
 #?(:clj
    (defn slf4j-log-handler
      {:no-doc true}
-     [_ _ _ {:keys [::logger ::level ::props ::exception]}]
+     [_ _ _ {:keys [::logger ::level ::props ::cause ::trace ::message]}]
      (let [logger (LoggerFactory/getLogger ^String logger)]
        (when (enabled? logger level)
-         (let [message (build-message props exception)]
+         (let [message (cond-> @message
+                         (some? trace)
+                         (str "\n" @trace))]
            (case level
-             :trace (.trace ^Logger logger ^String message ^Throwable exception)
-             :debug (.debug ^Logger logger ^String message ^Throwable exception)
-             :info  (.info  ^Logger logger ^String message ^Throwable exception)
-             :warn  (.warn  ^Logger logger ^String message ^Throwable exception)
-             :error (.error ^Logger logger ^String message ^Throwable exception)
-             :fatal (.error ^Logger logger ^String message ^Throwable exception)
+             :trace (.trace ^Logger logger ^String message ^Throwable cause)
+             :debug (.debug ^Logger logger ^String message ^Throwable cause)
+             :info  (.info  ^Logger logger ^String message ^Throwable cause)
+             :warn  (.warn  ^Logger logger ^String message ^Throwable cause)
+             :error (.error ^Logger logger ^String message ^Throwable cause)
+             :fatal (.error ^Logger logger ^String message ^Throwable cause)
              (throw (IllegalArgumentException. (str "invalid level:"  level)))))))))
-
-;; Attach asynchronous logs reader that forward all messages to SLF4J
-#?(:clj (add-watch log-record ::default slf4j-log-handler))
-
-#?(:cljs
-   (def ^:private colors-map
-     #js {:gray3  "#8e908c"
-          :gray4  "#969896"
-          :gray5  "#4d4d4c"
-          :gray6  "#282a2e"
-          :black  "#1d1f21"
-          :red    "#c82829"
-          :blue   "#4271ae"
-          :orange "#f5871f"}))
-
-#?(:cljs
-   (defn- level->color
-     [level]
-     (case level
-       (:error :err)         (unchecked-get colors-map "red")
-       (:warn :warning :wrn) (unchecked-get colors-map "orange")
-       (:info :inf)          (unchecked-get colors-map "blue")
-       (:debug :dbg)         (unchecked-get colors-map "gray4")
-       (:trace :trc)         (unchecked-get colors-map "gray3"))))
-
-#?(:cljs
-   (defn- level->name
-     [level]
-     (case level
-       :debug "DBG"
-       :trace "TRC"
-       :info "INF"
-       :warn "WRN"
-       :warning "WRN"
-       :error "ERR")))
-
-#?(:cljs
-   (defn- level->int
-     [level]
-     (case level
-       :debug 10
-       :trace 20
-       :info 30
-       :warn 40
-       :warning 50
-       :error 60)))
-
-#?(:cljs
-   (defn- prepare-message
-     [props]
-     (loop [props     (seq props)
-            msg-props []
-            oth-props []]
-       (if (nil? props)
-         [(fmt-props *default-props-format* msg-props) oth-props]
-         (let [[k v :as kv] (first props)]
-           (if (and (qualified-ident? k)
-                    (= "js" (namespace k)))
-             (recur (next props)
-                    msg-props
-                    (conj oth-props [:js (name k) (if (object? v) v (clj->js v))]))
-             (recur (next props)
-                    (conj msg-props kv)
-                    oth-props)))))))
 
 #?(:cljs
    (defn console-log-handler
      {:no-doc true}
-     [_ _ _ {:keys [::logger ::props ::level ::cause]}]
+     [_ _ _ {:keys [::logger ::props ::level ::cause ::trace ::message]}]
      (when (enabled? logger level)
-       (let [hstyles   (str/ffmt "font-weight: 600; color: %" (level->color level))
-             styles    (str/ffmt "font-weight: 300; color: %" (unchecked-get colors-map "gray6"))
-             header    (str/concat "%c" (level->name level) " [" logger "] ")
-             props     (pu/maybe-deref props)
-             [msg adt] (prepare-message props)
-             message   (str/concat header "%c" msg)]
+       (let [hstyles (str/ffmt "font-weight: 600; color: %" (level->color level))
+             mstyles (str/ffmt "font-weight: 300; color: %" "#282a2e")
+             header  (str/concat "%c" (level->name level) " [" logger "] ")
+             message (str/concat header "%c" @message)]
 
-         (js/console.group message hstyles styles)
-         (doseq [[type n v] adt]
+         (js/console.group message hstyles mstyles)
+         (doseq [[type n v] (get-special-props props)]
            (case type
              :js (js/console.log n v)
              :error (if (ex/error? v)
-                      (js/console.error (pr-str v))
-                      (js/console.error v))))
+                      (js/console.error n (pr-str v))
+                      (js/console.error n v))))
 
          (when cause
            (let [data    (ex-data cause)
@@ -315,33 +274,29 @@
                (js/console.log "Data:")
                (js/console.log (pp/pprint-str data)))
 
-             (js/console.log (.-stack cause))))
+             (js/console.log @trace #_(.-stack cause))))
 
          (js/console.groupEnd message)))))
 
-#?(:cljs (add-watch log-record ::default console-log-handler))
-
-#?(:cljs
-   (defn set-level*
-     "Set the level (a keyword) of the given logger, identified by name."
-     {:no-doc true}
-     [name lvl]
-     (.set ^js/Map loggers name (level->int lvl))))
+#?(:clj  (add-watch log-record ::default slf4j-log-handler)
+   :cljs (add-watch log-record ::default console-log-handler))
 
 (defmacro set-level!
+  "A CLJS-only macro for set logging level to current (that matches the
+  current namespace) or user specified logger."
   ([level]
    (when (:ns &env)
-     `(set-level* ~(str *ns*) ~level)))
-  ([n level]
+     `(.set ^js/Map loggers ~(str *ns*) (level->int ~level))))
+  ([name level]
    (when (:ns &env)
-     `(set-level* ~n ~level))))
+     `(.set ^js/Map loggers ~name (level->int ~level)))))
 
 #?(:cljs
    (defn setup!
-     [config]
+     [{:as config}]
      (run! (fn [[logger level]]
              (let [logger (if (keyword? logger) (name logger) logger)]
-               (set-level* logger level)))
+               (l/set-level! logger level)))
            config)))
 
 (defmacro info

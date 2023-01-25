@@ -91,12 +91,16 @@
 
 #?(:clj
 (defn format-throwable
-  [^Throwable cause & {:keys [trace? data? chain? data-level data-length trace-length]
-                       :or {trace? true
+  [^Throwable cause & {:keys [summary? detail? header? data? explain? chain? data-level data-length trace-length]
+                       :or {summary? true
+                            detail? true
+                            header? true
                             data? true
+                            explain? true
                             chain? true
                             data-length 10
                             data-level 3}}]
+
   (letfn [(print-trace-element [^StackTraceElement e]
             (let [class (.getClassName e)
                   method (.getMethodName e)]
@@ -123,28 +127,29 @@
                 (doseq [line lines]
                   (println "       " line)))))
 
-          (print-trace-title [cause]
+          (print-trace-title [^Throwable cause]
             (print   " →  ")
             (printf "%s: %s" (.getName (class cause)) (first (str/lines (ex-message cause))))
 
-            (when-let [e (first (.getStackTrace ^Throwable cause))]
+            (when-let [^StackTraceElement e (first (.getStackTrace ^Throwable cause))]
               (printf " (%s:%d)" (or (.getFileName e) "") (.getLineNumber e)))
 
             (newline))
 
-          (print-summary [cause]
+          (print-summary [^Throwable cause]
             (let [causes (loop [cause (ex-cause cause)
                                 result []]
                            (if cause
                              (recur (ex-cause cause)
                                     (conj result cause))
                              result))]
-              (println "TRACE:")
+              (when header?
+                (println "SUMMARY:"))
               (print-trace-title cause)
               (doseq [cause causes]
                 (print-trace-title cause))))
 
-          (print-trace [cause]
+          (print-trace [^Throwable cause]
             (print-trace-title cause)
             (let [st (.getStackTrace cause)]
               (print "    at: ")
@@ -158,31 +163,30 @@
                 (print-trace-element e)
                 (newline))))
 
-          (print-all [cause]
-            (print-summary cause)
-            (println "DETAIL:")
-            (when trace?
-              (print-trace cause))
-
-            (when data?
-              (when-let [data (ex-data cause)]
+          (print-detail [^Throwable cause]
+            (print-trace cause)
+            (when-let [data (ex-data cause)]
+              (when data?
+                (print-data (dissoc data ::s/problems ::s/spec ::s/value)))
+              (when explain?
                 (if-let [explain (explain data)]
-                  (print-explain explain)
-                  (print-data data))))
+                  (print-explain explain)))))
 
-            (when chain?
-              (loop [cause cause]
-                (when-let [cause (ex-cause cause)]
-                  (newline)
-                  (print-trace cause)
+          (print-all [^Throwable cause]
+            (when summary?
+              (print-summary cause))
 
-                  (when data?
-                    (when-let [data (ex-data cause)]
-                      (if-let [explain (explain data)]
-                        (print-explain explain)
-                        (print-data data))))
+            (when detail?
+              (when header?
+                (println "DETAIL:"))
 
-                  (recur cause)))))
+              (print-detail cause)
+              (when chain?
+                (loop [cause cause]
+                  (when-let [cause (ex-cause cause)]
+                    (newline)
+                    (print-detail cause)
+                    (recur cause))))))
           ]
     (with-out-str
       (print-all cause)))))
