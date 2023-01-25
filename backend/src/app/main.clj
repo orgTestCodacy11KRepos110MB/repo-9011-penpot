@@ -23,7 +23,6 @@
    [app.loggers.audit :as-alias audit]
    [app.loggers.audit.tasks :as-alias audit.tasks]
    [app.loggers.webhooks :as-alias webhooks]
-   [app.loggers.zmq :as-alias lzmq]
    [app.metrics :as-alias mtx]
    [app.metrics.definition :as-alias mdef]
    [app.msgbus :as-alias mbus]
@@ -451,9 +450,8 @@
    {::db/pool            (ig/ref ::db/pool)
     ::http.client/client (ig/ref ::http.client/client)}
 
-   ;; :app.loggers.loki/reporter
-   ;; {::lzmq/receiver      (ig/ref ::lzmq/receiver)
-   ;;  ::http.client/client (ig/ref ::http.client/client)}
+   :app.loggers.loki/reporter
+   {::http.client/client (ig/ref ::http.client/client)}
 
    :app.loggers.mattermost/reporter
    {::http.client/client (ig/ref ::http.client/client)}

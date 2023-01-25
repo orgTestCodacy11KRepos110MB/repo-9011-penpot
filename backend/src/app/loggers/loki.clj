@@ -7,82 +7,85 @@
 (ns app.loggers.loki
   "A Loki integration."
   (:require
+   [app.common.exceptions :as ex]
    [app.common.logging :as l]
+   [app.common.spec :as us]
    [app.config :as cf]
    [app.http.client :as http]
    [app.util.json :as json]
-   [clojure.core.async :as a]
    [clojure.spec.alpha :as s]
    [integrant.core :as ig]
-   [promesa.exec :as px]))
+   [promesa.exec :as px]
+   [promesa.exec.csp :as sp]))
 
-(declare ^:private handle-event)
+(declare ^:private handle-record)
 
 (defmethod ig/pre-init-spec ::reporter [_]
   (s/keys :req [::http/client]))
 
 (defmethod ig/init-key ::reporter
   [_ cfg]
-  ;; (when-let [uri (cf/get :loggers-loki-uri)]
-  ;;   (px/thread
-  ;;     {:name "penpot/loki-reporter"}
-  ;;     (l/info :hint "reporter started" :uri uri)
-  ;;     (let [input (a/chan (a/dropping-buffer 2048))
-  ;;           cfg   (assoc cfg ::uri uri)]
+  (when-let [uri (cf/get :loggers-loki-uri)]
+    (px/thread
+      {:name "penpot/loki-reporter"
+       :virtual true}
+      (l/info :hint "initializing loki reporter" :uri uri)
+      (let [input (sp/chan (sp/dropping-buffer 2048))
+            cfg   (assoc cfg ::uri uri)]
+        (add-watch l/log-record ::reporter #(sp/put! input %4))
+        (try
+          (loop []
+            (when-let [record (sp/take! input)]
+              (handle-record cfg record)
+              (recur)))
 
-  ;;       (try
-  ;;         (lzmq/sub! (::lzmq/receiver cfg) input)
-  ;;         (loop []
-  ;;           (when-let [msg (a/<!! input)]
-  ;;             (handle-event cfg msg)
-  ;;             (recur)))
-
-  ;;         (catch InterruptedException _
-  ;;           (l/debug :hint "reporter interrupted"))
-  ;;         (catch Throwable cause
-  ;;           (l/error :hint "unexpected exception"
-  ;;                    :cause cause))
-  ;;         (finally
-  ;;           (a/close! input)
-  ;;           (l/info :hint "reporter terminated"))))))
-  )
+          (catch InterruptedException _
+            (l/debug :hint "reporter interrupted"))
+          (catch Throwable cause
+            (l/error :hint "unexpected exception"
+                     :cause cause))
+          (finally
+            (sp/close! input)
+            (remove-watch l/log-record ::reporter)
+            (l/info :hint "reporter terminated")))))))
 
 (defmethod ig/halt-key! ::reporter
   [_ thread]
   (some-> thread px/interrupt!))
 
-;; (defn- prepare-payload
-;;   [event]
-;;   (let [labels {:host    (cf/get :host)
-;;                 :tenant  (cf/get :tenant)
-;;                 :version (:full cf/version)
-;;                 :logger  (:logger/name event)
-;;                 :level   (:logger/level event)}]
-;;     {:streams
-;;      [{:stream labels
-;;        :values [[(str (* (inst-ms (:created-at event)) 1000000))
-;;                  (str (:message event)
-;;                       (when-let [error (:trace event)]
-;;                         (str "\n" error)))]]}]}))
+(defn- prepare-payload
+  [{:keys [::l/logger ::l/level ::l/message ::l/trace ::l/timestamp]}]
+  (let [labels {:host    (cf/get :host)
+                :tenant  (cf/get :tenant)
+                :version (:full cf/version)
+                :logger  logger
+                :level   (name level)}]
+    {:streams
+     [{:stream labels
+       :values [[(str (* timestamp 1000000))
+                 (cond-> @message
+                   (some? trace)
+                   (str "\n" @trace))]]}]}))
 
-;; (defn- make-request
-;;   [{:keys [::uri] :as cfg} payload]
-;;   (http/req! cfg
-;;              {:uri uri
-;;               :timeout 3000
-;;               :method :post
-;;               :headers {"content-type" "application/json"}
-;;               :body (json/encode payload)}
-;;              {:sync? true}))
+(defn- make-request
+  [{:keys [::uri] :as cfg} payload]
+  (http/req! cfg
+             {:uri uri
+              :timeout 3000
+              :method :post
+              :headers {"content-type" "application/json"}
+              :body (json/encode payload)}
+             {:sync? true}))
 
-;; (defn- handle-event
-;;   [cfg event]
-;;   (try
-;;     (let [payload  (prepare-payload event)
-;;           response (make-request cfg payload)]
-;;       (when-not (= 204 (:status response))
-;;         (l/error :hint "error on sending log to loki (unexpected response)"
-;;                  :response (pr-str response))))
-;;     (catch Throwable cause
-;;       (l/error :hint "error on sending log to loki (unexpected exception)"
-;;                :cause cause))))
+(defn- handle-record
+  [cfg record]
+  (us/assert! ::l/record record)
+  (try
+    (let [payload  (prepare-payload record)
+          response (make-request cfg payload)]
+      (when-not (= 204 (:status response))
+        (l/error :hint "error on sending log to loki (unexpected response)"
+                 :response (pr-str response))))
+    (catch Throwable cause
+      (l/error :hint "error on sending log to loki (unexpected exception)"
+               :cause cause))))

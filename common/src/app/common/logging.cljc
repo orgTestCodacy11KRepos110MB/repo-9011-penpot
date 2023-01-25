@@ -179,7 +179,7 @@
                       (= "js" (namespace k))
                       [:js (name k) (if (object? v) v (clj->js v))]
 
-                      (= "error" (namespace))
+                      (= "error" (namespace k))
                       [:error (name k) v])))))))
 
 (def ^:private reserved-props
@@ -195,11 +195,17 @@
 (s/def ::context (s/nilable (s/map-of keyword? any?)))
 (s/def ::level #{:trace :debug :info :warn :error :fatal})
 (s/def ::logger string?)
+(s/def ::timestamp ::us/integer)
 (s/def ::cause (s/nilable ex/exception?))
 (s/def ::message delay?)
 (s/def ::record
   (s/keys :req [::id ::props ::logger ::level]
           :opt [::cause ::context]))
+
+(defn current-timestamp
+  []
+  #?(:clj (inst-ms (java.time.Instant/now))
+     :cljs (js/Date.now)))
 
 (defmacro log!
   "Emit a new log record to the global log-record state (asynchronously). "
@@ -207,6 +213,7 @@
   (let [{:keys [::level ::logger ::context ::sync? cause] :or {sync? false}} props
         props (into [] msg-props-xf props)]
     `(let [props#   (cond-> (delay ~props) ~sync? deref)
+           ts#      (current-timestamp)
            context# *context*]
        (px/run! *default-executor*
                 (fn []
@@ -216,6 +223,7 @@
                         context# (d/without-nils
                                   (merge context# ~context))
                         lrecord# {::id (uuid/next)
+                                  ::timestamp ts#
                                   ::message (delay (build-message props#))
                                   ::props props#
                                   ::context context#
